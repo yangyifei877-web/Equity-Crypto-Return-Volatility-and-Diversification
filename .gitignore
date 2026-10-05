@@ -1,0 +1,13 @@
+.DS_Store
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*_cache/
+*_files/
+*.log
+*.tex
+*.aux
+*.out
+*.toc
+*.synctex.gz

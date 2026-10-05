@@ -1,0 +1,1518 @@
+---
+title: "482 final project"
+author: "Yifei Yang"
+date: "2025-12-03"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### block 1:
+```{r}
+##############################################
+# 0. Packages
+##############################################
+
+# 如果没装过这些包，先取消注释运行：
+# install.packages("quantmod")
+# install.packages("PerformanceAnalytics")
+# install.packages("TTR")
+# install.packages("ggplot2")
+
+library(quantmod)
+library(PerformanceAnalytics)
+library(TTR)
+library(ggplot2)
+
+##############################################
+# 1. Download price data & compute returns
+##############################################
+
+# Tickers: S&P 500, Nasdaq, BTC, ETH, SOL
+symbols <- c("^GSPC", "^IXIC", "BTC-USD", "ETH-USD", "SOL-USD")
+
+# 用 auto.assign = FALSE 把每个 symbol 的数据放入 list，避免名字问题
+data_list <- lapply(symbols, function(sym) {
+  getSymbols(
+    Symbols     = sym,
+    src         = "yahoo",
+    from        = "2018-01-01",
+    auto.assign = FALSE
+  )
+})
+names(data_list) <- symbols
+
+# 提取收盘价并合并成一个 xts 对象
+prices <- do.call(merge, lapply(data_list, Cl))
+
+# 重新命名列
+colnames(prices) <- c("SP500", "Nasdaq", "BTC", "ETH", "SOL")
+
+# 去掉中间任何 NA 行（只保留所有资产都有价格的日期）
+prices <- na.omit(prices)
+
+# --- Daily log returns ---
+daily_ret <- na.omit(diff(log(prices)))
+
+# --- Weekly log returns ---
+weekly_prices <- apply.weekly(prices, last)
+weekly_ret    <- na.omit(diff(log(weekly_prices)))
+
+##############################################
+# 2. Descriptive statistics (daily & weekly)
+##############################################
+
+daily_stats_raw  <- table.Stats(daily_ret)
+weekly_stats_raw <- table.Stats(weekly_ret)
+
+# 转置成 行=资产, 列=统计量 的形式
+daily_stats  <- t(daily_stats_raw)
+weekly_stats <- t(weekly_stats_raw)
+
+cat("=== Daily return summary stats ===\n")
+print(round(daily_stats, 4))
+
+cat("\n=== Weekly return summary stats ===\n")
+print(round(weekly_stats, 4))
+
+##############################################
+# 3. Static correlation matrices
+##############################################
+
+cor_daily  <- cor(daily_ret)
+cor_weekly <- cor(weekly_ret)
+
+cat("\n=== Correlation matrix (daily returns) ===\n")
+print(round(cor_daily, 3))
+
+cat("\n=== Correlation matrix (weekly returns) ===\n")
+print(round(cor_weekly, 3))
+
+##############################################
+# 4. Rolling correlations (example pairs)
+##############################################
+
+# 设置 rolling window 长度（例如 60 个交易日）
+window_size <- 60
+
+# Rolling correlation: SP500 vs BTC (daily)
+roll_cor_sp_btc <- runCor(
+  x = daily_ret[, "SP500"],
+  y = daily_ret[, "BTC"],
+  n = window_size
+)
+
+# Rolling correlation: Nasdaq vs BTC (daily)
+roll_cor_nas_btc <- runCor(
+  x = daily_ret[, "Nasdaq"],
+  y = daily_ret[, "BTC"],
+  n = window_size
+)
+
+# 整理成 data.frame 用于 ggplot
+roll_cor_df <- data.frame(
+  date           = index(roll_cor_sp_btc),
+  cor_SP500_BTC  = as.numeric(roll_cor_sp_btc),
+  cor_Nasdaq_BTC = as.numeric(roll_cor_nas_btc)
+)
+
+##############################################
+# 5. Plot rolling correlations
+##############################################
+
+p1 <- ggplot(roll_cor_df, aes(x = date, y = cor_SP500_BTC)) +
+  geom_line() +
+  labs(
+    title = "60-day Rolling Correlation: SP500 vs BTC",
+    x     = "Date",
+    y     = "Correlation"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(roll_cor_df, aes(x = date, y = cor_Nasdaq_BTC)) +
+  geom_line() +
+  labs(
+    title = "60-day Rolling Correlation: Nasdaq vs BTC",
+    x     = "Date",
+    y     = "Correlation"
+  ) +
+  theme_minimal()
+
+print(p1)
+print(p2)
+
+##############################################
+# End of Block 1
+##############################################
+
+
+```
+
+```{r}
+##############################################
+# 6. Correlation heatmaps (daily & weekly)
+##############################################
+
+# 如果没有安装 reshape2，请先运行：
+ #install.packages("reshape2")
+library(reshape2)
+
+# 把相关矩阵转成 long format 方便 ggplot 画热力图
+cor_daily_long  <- melt(cor_daily,  varnames = c("Asset1", "Asset2"), value.name = "Corr")
+cor_weekly_long <- melt(cor_weekly, varnames = c("Asset1", "Asset2"), value.name = "Corr")
+
+# Daily correlation heatmap
+p_cor_daily <- ggplot(cor_daily_long, aes(x = Asset1, y = Asset2, fill = Corr)) +
+  geom_tile() +
+  geom_text(aes(label = round(Corr, 2)), size = 3) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+  labs(
+    title = "Correlation Matrix (Daily Returns)",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Weekly correlation heatmap
+p_cor_weekly <- ggplot(cor_weekly_long, aes(x = Asset1, y = Asset2, fill = Corr)) +
+  geom_tile() +
+  geom_text(aes(label = round(Corr, 2)), size = 3) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+  labs(
+    title = "Correlation Matrix (Weekly Returns)",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p_cor_daily)
+print(p_cor_weekly)
+
+```
+```{r}
+##############################################
+# 7. Rolling correlations with event shading
+##############################################
+
+event_periods <- data.frame(
+  start = as.Date(c("2020-11-01", "2022-04-01")),
+  end   = as.Date(c("2021-12-31", "2023-03-31")),
+  label = c("Crypto Bull Run", "Crypto Winter")
+)
+
+plot_rolling_with_events <- function(df, y_col, title) {
+  ggplot(df, aes(x = date, y = .data[[y_col]])) +
+    # 阴影区
+    geom_rect(
+      data = event_periods,
+      inherit.aes = FALSE,
+      aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+      alpha = 0.1
+    ) +
+    geom_line() +
+    # 事件标签：用 start + (end - start)/2 当作中点
+    geom_text(
+      data = event_periods,
+      inherit.aes = FALSE,
+      aes(
+        x = start + (end - start) / 2,
+        y = 0.95,
+        label = label
+      ),
+      size = 3
+    ) +
+    labs(
+      title = title,
+      x     = "Date",
+      y     = "60-day Rolling Correlation"
+    ) +
+    ylim(-0.2, 1.0) +
+    theme_minimal()
+}
+
+p1_evt <- plot_rolling_with_events(
+  roll_cor_df,
+  "cor_SP500_BTC",
+  "60-day Rolling Correlation: SP500 vs BTC"
+)
+
+p2_evt <- plot_rolling_with_events(
+  roll_cor_df,
+  "cor_Nasdaq_BTC",
+  "60-day Rolling Correlation: Nasdaq vs BTC"
+)
+
+print(p1_evt)
+print(p2_evt)
+
+
+##############################################
+# Extra: 60-day rolling correlations for ETH & SOL
+##############################################
+
+# 1) SP500 vs ETH, Nasdaq vs ETH
+roll_cor_sp_eth <- runCor(
+  x = daily_ret[, "SP500"],
+  y = daily_ret[, "ETH"],
+  n = window_size
+)
+
+roll_cor_nas_eth <- runCor(
+  x = daily_ret[, "Nasdaq"],
+  y = daily_ret[, "ETH"],
+  n = window_size
+)
+
+roll_cor_df_eth <- data.frame(
+  date           = index(roll_cor_sp_eth),
+  cor_SP500_ETH  = as.numeric(roll_cor_sp_eth),
+  cor_Nasdaq_ETH = as.numeric(roll_cor_nas_eth)
+)
+
+p3_evt <- plot_rolling_with_events(
+  roll_cor_df_eth,
+  "cor_SP500_ETH",
+  "60-day Rolling Correlation: SP500 vs ETH"
+)
+
+p4_evt <- plot_rolling_with_events(
+  roll_cor_df_eth,
+  "cor_Nasdaq_ETH",
+  "60-day Rolling Correlation: Nasdaq vs ETH"
+)
+
+print(p3_evt)
+print(p4_evt)
+
+# 2) SP500 vs SOL, ETH vs SOL
+roll_cor_sp_sol <- runCor(
+  x = daily_ret[, "SP500"],
+  y = daily_ret[, "SOL"],
+  n = window_size
+)
+
+roll_cor_eth_sol <- runCor(
+  x = daily_ret[, "ETH"],
+  y = daily_ret[, "SOL"],
+  n = window_size
+)
+
+roll_cor_df_sol <- data.frame(
+  date          = index(roll_cor_sp_sol),
+  cor_SP500_SOL = as.numeric(roll_cor_sp_sol),
+  cor_ETH_SOL   = as.numeric(roll_cor_eth_sol)
+)
+
+p5_evt <- plot_rolling_with_events(
+  roll_cor_df_sol,
+  "cor_SP500_SOL",
+  "60-day Rolling Correlation: SP500 vs SOL"
+)
+
+p6_evt <- plot_rolling_with_events(
+  roll_cor_df_sol,
+  "cor_ETH_SOL",
+  "60-day Rolling Correlation: ETH vs SOL"
+)
+
+print(p5_evt)
+print(p6_evt)
+
+
+```
+
+### block 2:
+```{r}
+##############################################
+# Block 2: Granger Causality & VAR
+##############################################
+
+# 如果还没装这些包，先取消注释安装：
+# install.packages("vars")
+# install.packages("dplyr")
+# install.packages("ggplot2")
+
+library(vars)
+library(dplyr)
+library(ggplot2)
+
+##############################################
+# 1. Prepare data for VAR (daily returns)
+##############################################
+
+# 先选我们最关心的资产：SP500, Nasdaq, BTC
+# （ETH / SOL 会在最后的 robustness table 里统一处理）
+var_data_full <- na.omit(daily_ret[, c("SP500", "Nasdaq", "BTC")])
+
+# 转成 data.frame，vars 包更好处理
+var_data_full <- as.data.frame(var_data_full)
+
+# 简单看一下
+head(var_data_full)
+summary(var_data_full)
+
+##############################################
+# 2. Choose lag order using VARselect (3-var VAR)
+##############################################
+
+# 最多考虑 10 阶滞后（你可以改成 5 或 15）
+lag_selection <- VARselect(var_data_full, lag.max = 10, type = "const")
+lag_selection
+
+# 一般可以选 AIC 或 BIC 推荐的阶数，例如：
+p_aic <- lag_selection$selection["AIC(n)"]
+p_bic <- lag_selection$selection["SC(n)"]
+
+p_aic
+p_bic
+
+# 这里我们先用 AIC 推荐的阶数
+p_use <- as.numeric(p_aic)
+
+##############################################
+# 3. Fit VAR model (SP500, Nasdaq, BTC)
+##############################################
+
+var_model <- VAR(var_data_full, p = p_use, type = "const")
+summary(var_model)
+
+##############################################
+# 4. Granger causality tests (3-var system)
+##############################################
+# vars::causality() 是基于你刚拟合的 VAR 模型做 joint test
+
+# 4.1 SP500 -> BTC ?  （测试 SP500 的滞后项是否有助于预测 BTC）
+granger_SP500_to_BTC <- causality(var_model, cause = "SP500")
+cat("=== 3-var VAR: Granger test SP500 causes BTC (joint) ===\n")
+print(granger_SP500_to_BTC)
+
+# 4.2 BTC -> SP500 ?
+granger_BTC_to_SP500 <- causality(var_model, cause = "BTC")
+cat("\n=== 3-var VAR: Granger test BTC causes SP500 (joint) ===\n")
+print(granger_BTC_to_SP500)
+
+# 4.3 Nasdaq -> BTC ?
+granger_Nasdaq_to_BTC <- causality(var_model, cause = "Nasdaq")
+cat("\n=== 3-var VAR: Granger test Nasdaq causes BTC (joint) ===\n")
+print(granger_Nasdaq_to_BTC)
+
+# 4.4 BTC -> Nasdaq ?
+cat("\n=== 3-var VAR: Granger test BTC causes Nasdaq (joint) ===\n")
+granger_BTC_to_Nasdaq <- causality(var_model, cause = "BTC")
+print(granger_BTC_to_Nasdaq)
+# 说明：在 3-var 系统里，"BTC causes ..." 的 test 是对 SP500 和 Nasdaq 方程一起做 joint test，
+# 详细解释我们主要用后面的 2-var VAR 结果。
+
+##############################################
+# 5. Simple 2-variable VAR examples (BTC, equity)
+##############################################
+# 为了更好解释“谁预测谁”，我们单独做 2 维 VAR：
+# 5.1 VAR of (SP500, BTC)
+
+data_SP500_BTC <- as.data.frame(na.omit(daily_ret[, c("SP500", "BTC")]))
+
+lag_sel_SB <- VARselect(data_SP500_BTC, lag.max = 10, type = "const")
+lag_sel_SB
+p_SB <- lag_sel_SB$selection["AIC(n)"]
+
+var_SB <- VAR(data_SP500_BTC, p = p_SB, type = "const")
+summary(var_SB)
+
+# Granger tests in 2-var system
+cat("\n=== 2-var VAR (SP500, BTC): SP500 -> BTC? ===\n")
+print(causality(var_SB, cause = "SP500"))
+
+cat("\n=== 2-var VAR (SP500, BTC): BTC -> SP500? ===\n")
+print(causality(var_SB, cause = "BTC"))
+
+# 5.2 VAR of (Nasdaq, BTC) 作为对照
+data_Nasdaq_BTC <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", "BTC")]))
+
+lag_sel_NB <- VARselect(data_Nasdaq_BTC, lag.max = 10, type = "const")
+lag_sel_NB
+p_NB <- lag_sel_NB$selection["AIC(n)"]
+
+var_NB <- VAR(data_Nasdaq_BTC, p = p_NB, type = "const")
+summary(var_NB)
+
+cat("\n=== 2-var VAR (Nasdaq, BTC): Nasdaq -> BTC? ===\n")
+print(causality(var_NB, cause = "Nasdaq"))
+
+cat("\n=== 2-var VAR (Nasdaq, BTC): BTC -> Nasdaq? ===\n")
+print(causality(var_NB, cause = "BTC"))
+
+##############################################
+# 6. Impulse Response Functions (IRFs) with ggplot2
+##############################################
+
+set.seed(123)  # 让 bootstrap IRFs 可复现
+
+# 先计算 IRF
+irf_SP500_to_BTC <- irf(
+  var_SB,
+  impulse  = "SP500",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_SP500 <- irf(
+  var_SB,
+  impulse  = "BTC",
+  response = "SP500",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_Nasdaq_to_BTC <- irf(
+  var_NB,
+  impulse  = "Nasdaq",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_Nasdaq <- irf(
+  var_NB,
+  impulse  = "BTC",
+  response = "Nasdaq",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+# ggplot 版 IRF 画图函数
+plot_irf_gg <- function(irf_obj, title, ylab) {
+  irf_vec   <- as.numeric(irf_obj$irf[[1]])
+  lower_vec <- as.numeric(irf_obj$Lower[[1]])
+  upper_vec <- as.numeric(irf_obj$Upper[[1]])
+  horizon   <- seq_along(irf_vec)
+
+  df <- data.frame(
+    horizon = horizon,
+    irf     = irf_vec,
+    lower   = lower_vec,
+    upper   = upper_vec
+  )
+
+  ggplot(df, aes(x = horizon)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper, fill = "95% CI"), alpha = 0.2) +
+    geom_line(aes(y = irf, color = "IRF"), size = 0.7) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    scale_color_manual("", values = c("IRF" = "black")) +
+    scale_fill_manual("", values = c("95% CI" = "grey80")) +
+    labs(title = title, x = "Horizon (days)", y = ylab) +
+    theme_minimal()
+}
+
+# 画四张 IRF 图
+p_irf_SP500_to_BTC  <- plot_irf_gg(irf_SP500_to_BTC,  "IRF: SP500 shock → BTC",    "BTC return")
+p_irf_BTC_to_SP500  <- plot_irf_gg(irf_BTC_to_SP500,  "IRF: BTC shock → SP500",    "SP500 return")
+p_irf_Nasdaq_to_BTC <- plot_irf_gg(irf_Nasdaq_to_BTC, "IRF: Nasdaq shock → BTC",   "BTC return")
+p_irf_BTC_to_Nasdaq <- plot_irf_gg(irf_BTC_to_Nasdaq, "IRF: BTC shock → Nasdaq",   "Nasdaq return")
+
+print(p_irf_SP500_to_BTC)
+print(p_irf_BTC_to_SP500)
+print(p_irf_Nasdaq_to_BTC)
+print(p_irf_BTC_to_Nasdaq)
+
+##############################################
+# 7. Subsample Granger summary for SP500–BTC
+##############################################
+
+# 1. 构造带日期的 data.frame（只用 SP500 & BTC）
+df_SB <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "BTC")])
+)
+
+# 2. 定义几个时期（你可以按需要微调）
+date_break1 <- as.Date("2020-01-01")  # pre-COVID
+date_break2 <- as.Date("2022-01-01")  # post-bull
+
+df_SB <- df_SB %>%
+  mutate(
+    regime = case_when(
+      date <  date_break1 ~ "Pre-2020",
+      date >= date_break1 & date < date_break2 ~ "2020-2021",
+      date >= date_break2 ~ "2022+"
+    )
+  )
+
+# 3. 小工具函数：在给定数据上跑 2-var VAR + Granger，并返回 p-values
+run_granger_pair <- function(data_2var, max_lag = 10) {
+  data_2var <- na.omit(data_2var)
+
+  lag_sel <- VARselect(data_2var, lag.max = max_lag, type = "const")
+  p_use   <- lag_sel$selection["AIC(n)"]
+
+  var_mod <- VAR(data_2var, p = p_use, type = "const")
+
+  # SP500 -> BTC
+  pv_SP500_to_BTC <- causality(var_mod, cause = "SP500")$Granger[["p.value"]]
+
+  # BTC -> SP500
+  pv_BTC_to_SP500 <- causality(var_mod, cause = "BTC")$Granger[["p.value"]]
+
+  tibble(
+    lag_AIC        = as.numeric(p_use),
+    p_SP500_to_BTC = as.numeric(pv_SP500_to_BTC),
+    p_BTC_to_SP500 = as.numeric(pv_BTC_to_SP500)
+  )
+}
+
+# 4. 对全样本和每个 regime 分别跑
+full_res <- run_granger_pair(df_SB[, c("SP500", "BTC")]) %>%
+  mutate(Regime = "Full sample")
+
+res_by_regime <- df_SB %>%
+  group_by(Regime = regime) %>%
+  group_modify(~ run_granger_pair(.x[, c("SP500", "BTC")]))
+
+granger_summary <- bind_rows(full_res, res_by_regime) %>%
+  dplyr::select(Regime, lag_AIC, p_SP500_to_BTC, p_BTC_to_SP500) %>%
+  mutate(
+    p_SP500_to_BTC = round(p_SP500_to_BTC, 4),
+    p_BTC_to_SP500 = round(p_BTC_to_SP500, 4)
+  )
+
+cat("\n=== Granger causality summary by regime: SP500 & BTC ===\n")
+print(granger_summary)
+
+##############################################
+# 8. Multi-coin robustness: BTC vs ETH vs SOL
+##############################################
+# 目标：对 BTC / ETH / SOL 都跑 2-var VAR（SP500, coin）和（Nasdaq, coin），
+# 提取 Granger p-values，整理成一张小表放在 slide 上。
+
+run_equity_crypto_granger <- function(coin_name, max_lag = 10) {
+  # SP500 & coin
+  data_SP <- as.data.frame(na.omit(daily_ret[, c("SP500", coin_name)]))
+  lag_SP  <- VARselect(data_SP, lag.max = max_lag, type = "const")
+  p_SP    <- lag_SP$selection["AIC(n)"]
+  var_SP  <- VAR(data_SP, p = p_SP, type = "const")
+
+  pv_SP_to_coin  <- causality(var_SP, cause = "SP500")$Granger[["p.value"]]
+  pv_coin_to_SP  <- causality(var_SP, cause = coin_name)$Granger[["p.value"]]
+
+  # Nasdaq & coin
+  data_N <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", coin_name)]))
+  lag_N  <- VARselect(data_N, lag.max = max_lag, type = "const")
+  p_N    <- lag_N$selection["AIC(n)"]
+  var_N  <- VAR(data_N, p = p_N, type = "const")
+
+  pv_N_to_coin   <- causality(var_N, cause = "Nasdaq")$Granger[["p.value"]]
+  pv_coin_to_N   <- causality(var_N, cause = coin_name)$Granger[["p.value"]]
+
+  tibble(
+    Coin              = coin_name,
+    lag_SP_AIC        = as.numeric(p_SP),
+    lag_Nasdaq_AIC    = as.numeric(p_N),
+    p_SP500_to_Coin   = as.numeric(pv_SP_to_coin),
+    p_Coin_to_SP500   = as.numeric(pv_coin_to_SP),
+    p_Nasdaq_to_Coin  = as.numeric(pv_N_to_coin),
+    p_Coin_to_Nasdaq  = as.numeric(pv_coin_to_N)
+  )
+}
+
+coins <- c("BTC", "ETH", "SOL")
+
+granger_multi <- bind_rows(
+  lapply(coins, run_equity_crypto_granger)
+) %>%
+  mutate(
+    p_SP500_to_Coin  = round(p_SP500_to_Coin, 4),
+    p_Coin_to_SP500  = round(p_Coin_to_SP500, 4),
+    p_Nasdaq_to_Coin = round(p_Nasdaq_to_Coin, 4),
+    p_Coin_to_Nasdaq = round(p_Coin_to_Nasdaq, 4)
+  )
+
+cat("\n=== Multi-coin Granger robustness: Equity ↔ Crypto (BTC / ETH / SOL) ===\n")
+print(granger_multi)
+
+##############################################
+# End of Block 2
+##############################################
+
+```
+
+## block 2 results:
+```{r}
+##############################################
+# Block 2: Granger Causality & VAR  (clean output)
+##############################################
+
+# 如果还没装这些包，先取消注释安装：
+# install.packages("vars")
+# install.packages("dplyr")
+# install.packages("ggplot2")
+
+library(vars)
+library(dplyr)
+library(ggplot2)
+
+##############################################
+# 1. Prepare data for VAR (daily returns)
+##############################################
+
+# 核心 3 个资产：SP500, Nasdaq, BTC
+var_data_full <- na.omit(daily_ret[, c("SP500", "Nasdaq", "BTC")])
+var_data_full <- as.data.frame(var_data_full)
+
+##############################################
+# 2. Choose lag order using VARselect (3-var VAR)
+##############################################
+
+lag_selection <- VARselect(var_data_full, lag.max = 10, type = "const")
+p_aic <- lag_selection$selection["AIC(n)"]
+p_use <- as.numeric(p_aic)
+
+##############################################
+# 3. Fit VAR model (SP500, Nasdaq, BTC)
+##############################################
+
+var_model <- VAR(var_data_full, p = p_use, type = "const")
+# 不再打印 summary(var_model)，只用来做后面的检验
+
+##############################################
+# 4. Granger causality tests (3-var system)
+##############################################
+
+granger_SP500_to_BTC  <- causality(var_model, cause = "SP500")
+granger_BTC_to_SP500  <- causality(var_model, cause = "BTC")
+granger_Nasdaq_to_BTC <- causality(var_model, cause = "Nasdaq")
+granger_BTC_to_Nasdaq <- causality(var_model, cause = "BTC")
+
+# 提取 p-value 做成一个小表（主系统概要表）
+granger_3var_summary <- tibble(
+  Direction = c(
+    "SP500 → BTC (joint)",
+    "Nasdaq → BTC (joint)",
+    "BTC → (SP500, Nasdaq) (joint)"
+  ),
+  p_value = c(
+    granger_SP500_to_BTC$Granger[["p.value"]],
+    granger_Nasdaq_to_BTC$Granger[["p.value"]],
+    granger_BTC_to_SP500$Granger[["p.value"]]  # joint test: BTC causes others
+  )
+) %>%
+  mutate(p_value = round(p_value, 4))
+
+##############################################
+# 5. Simple 2-variable VAR examples (BTC, equity)
+##############################################
+
+# (1) SP500 & BTC
+data_SP500_BTC <- as.data.frame(na.omit(daily_ret[, c("SP500", "BTC")]))
+lag_sel_SB <- VARselect(data_SP500_BTC, lag.max = 10, type = "const")
+p_SB <- lag_sel_SB$selection["AIC(n)"]
+var_SB <- VAR(data_SP500_BTC, p = p_SB, type = "const")
+
+# (2) Nasdaq & BTC
+data_Nasdaq_BTC <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", "BTC")]))
+lag_sel_NB <- VARselect(data_Nasdaq_BTC, lag.max = 10, type = "const")
+p_NB <- lag_sel_NB$selection["AIC(n)"]
+var_NB <- VAR(data_Nasdaq_BTC, p = p_NB, type = "const")
+
+# 这里不再逐个 print causality() 结果，后面统一放在表里
+
+##############################################
+# 6. Impulse Response Functions (IRFs) with ggplot2
+##############################################
+
+set.seed(123)  # 让 bootstrap IRFs 可复现
+
+irf_SP500_to_BTC <- irf(
+  var_SB,
+  impulse  = "SP500",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_SP500 <- irf(
+  var_SB,
+  impulse  = "BTC",
+  response = "SP500",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_Nasdaq_to_BTC <- irf(
+  var_NB,
+  impulse  = "Nasdaq",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_Nasdaq <- irf(
+  var_NB,
+  impulse  = "BTC",
+  response = "Nasdaq",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+# ggplot 版 IRF 画图函数（只生成图，不输出文字）
+plot_irf_gg <- function(irf_obj, title, ylab) {
+  irf_vec   <- as.numeric(irf_obj$irf[[1]])
+  lower_vec <- as.numeric(irf_obj$Lower[[1]])
+  upper_vec <- as.numeric(irf_obj$Upper[[1]])
+  horizon   <- seq_along(irf_vec)
+
+  df <- data.frame(
+    horizon = horizon,
+    irf     = irf_vec,
+    lower   = lower_vec,
+    upper   = upper_vec
+  )
+
+  ggplot(df, aes(x = horizon)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper, fill = "95% CI"), alpha = 0.2) +
+    geom_line(aes(y = irf, color = "IRF"), size = 0.7) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    scale_color_manual("", values = c("IRF" = "black")) +
+    scale_fill_manual("", values = c("95% CI" = "grey80")) +
+    labs(title = title, x = "Horizon (days)", y = ylab) +
+    theme_minimal()
+}
+
+# 这四张图会出现在 HTML / slides 中
+p_irf_SP500_to_BTC  <- plot_irf_gg(irf_SP500_to_BTC,  "IRF: SP500 shock → BTC",  "BTC return")
+p_irf_BTC_to_SP500  <- plot_irf_gg(irf_BTC_to_SP500,  "IRF: BTC shock → SP500",  "SP500 return")
+p_irf_Nasdaq_to_BTC <- plot_irf_gg(irf_Nasdaq_to_BTC, "IRF: Nasdaq shock → BTC", "BTC return")
+p_irf_BTC_to_Nasdaq <- plot_irf_gg(irf_BTC_to_Nasdaq, "IRF: BTC shock → Nasdaq","Nasdaq return")
+
+print(p_irf_SP500_to_BTC)
+print(p_irf_BTC_to_SP500)
+print(p_irf_Nasdaq_to_BTC)
+print(p_irf_BTC_to_Nasdaq)
+
+##############################################
+# 7. Subsample Granger summary for SP500–BTC
+##############################################
+
+df_SB <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "BTC")])
+)
+
+date_break1 <- as.Date("2020-01-01")  # pre-COVID
+date_break2 <- as.Date("2022-01-01")  # post-bull
+
+df_SB <- df_SB %>%
+  mutate(
+    regime = case_when(
+      date <  date_break1 ~ "Pre-2020",
+      date >= date_break1 & date < date_break2 ~ "2020-2021",
+      date >= date_break2 ~ "2022+"
+    )
+  )
+
+run_granger_pair <- function(data_2var, max_lag = 10) {
+  data_2var <- na.omit(data_2var)
+
+  lag_sel <- VARselect(data_2var, lag.max = max_lag, type = "const")
+  p_use   <- lag_sel$selection["AIC(n)"]
+
+  var_mod <- VAR(data_2var, p = p_use, type = "const")
+
+  pv_SP500_to_BTC <- causality(var_mod, cause = "SP500")$Granger[["p.value"]]
+  pv_BTC_to_SP500 <- causality(var_mod, cause = "BTC")$Granger[["p.value"]]
+
+  tibble(
+    lag_AIC        = as.numeric(p_use),
+    p_SP500_to_BTC = as.numeric(pv_SP500_to_BTC),
+    p_BTC_to_SP500 = as.numeric(pv_BTC_to_SP500)
+  )
+}
+
+full_res <- run_granger_pair(df_SB[, c("SP500", "BTC")]) %>%
+  mutate(Regime = "Full sample")
+
+res_by_regime <- df_SB %>%
+  group_by(Regime = regime) %>%
+  group_modify(~ run_granger_pair(.x[, c("SP500", "BTC")]))
+
+granger_summary <- bind_rows(full_res, res_by_regime) %>%
+  dplyr::select(Regime, lag_AIC, p_SP500_to_BTC, p_BTC_to_SP500) %>%
+  mutate(
+    p_SP500_to_BTC = round(p_SP500_to_BTC, 4),
+    p_BTC_to_SP500 = round(p_BTC_to_SP500, 4)
+  )
+
+##############################################
+# 8. Multi-coin robustness: BTC vs ETH vs SOL
+##############################################
+
+run_equity_crypto_granger <- function(coin_name, max_lag = 10) {
+  # SP500 & coin
+  data_SP <- as.data.frame(na.omit(daily_ret[, c("SP500", coin_name)]))
+  lag_SP  <- VARselect(data_SP, lag.max = max_lag, type = "const")
+  p_SP    <- lag_SP$selection["AIC(n)"]
+  var_SP  <- VAR(data_SP, p = p_SP, type = "const")
+
+  pv_SP_to_coin <- causality(var_SP, cause = "SP500")$Granger[["p.value"]]
+  pv_coin_to_SP <- causality(var_SP, cause = coin_name)$Granger[["p.value"]]
+
+  # Nasdaq & coin
+  data_N <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", coin_name)]))
+  lag_N  <- VARselect(data_N, lag.max = max_lag, type = "const")
+  p_N    <- lag_N$selection["AIC(n)"]
+  var_N  <- VAR(data_N, p = p_N, type = "const")
+
+  pv_N_to_coin <- causality(var_N, cause = "Nasdaq")$Granger[["p.value"]]
+  pv_coin_to_N <- causality(var_N, cause = coin_name)$Granger[["p.value"]]
+
+  tibble(
+    Coin             = coin_name,
+    lag_SP_AIC       = as.numeric(p_SP),
+    lag_Nasdaq_AIC   = as.numeric(p_N),
+    p_SP500_to_Coin  = as.numeric(pv_SP_to_coin),
+    p_Coin_to_SP500  = as.numeric(pv_coin_to_SP),
+    p_Nasdaq_to_Coin = as.numeric(pv_N_to_coin),
+    p_Coin_to_Nasdaq = as.numeric(pv_coin_to_N)
+  )
+}
+
+coins <- c("BTC", "ETH", "SOL")
+
+granger_multi <- bind_rows(
+  lapply(coins, run_equity_crypto_granger)
+) %>%
+  mutate(
+    p_SP500_to_Coin  = round(p_SP500_to_Coin, 4),
+    p_Coin_to_SP500  = round(p_Coin_to_SP500, 4),
+    p_Nasdaq_to_Coin = round(p_Nasdaq_to_Coin, 4),
+    p_Coin_to_Nasdaq = round(p_Coin_to_Nasdaq, 4)
+  )
+
+##############################################
+# 9. 最终只打印 3 张在 slides 上用的表
+##############################################
+
+cat("\n=== (Table 1) 3-var VAR Granger summary: SP500, Nasdaq, BTC ===\n")
+print(granger_3var_summary)
+
+cat("\n=== (Table 2) Granger causality by regime: SP500 & BTC ===\n")
+print(granger_summary)
+
+cat("\n=== (Table 3) Multi-coin Granger robustness: Equity ↔ Crypto ===\n")
+print(granger_multi)
+
+##############################################
+# End of Block 2
+##############################################
+
+```
+
+
+**Granger causality between SP500 and BTC**
+
+- We estimate bivariate VAR models for SP500 and BTC returns on the full sample and three sub-periods (pre-2020, 2020–2021, 2022+), with the lag order chosen by AIC in each case.
+- Across all periods, the p-values for **SP500 → BTC** are consistently smaller than those for **BTC → SP500**, and in the COVID–bull-run period (2020–2021) SP500 significantly Granger-causes BTC at conventional levels.
+- In contrast, BTC lags rarely show significant predictive power for future SP500 returns.
+- Taken together, this suggests that, at the daily horizon, **equity market information tends to lead BTC**, while BTC does not systematically lead the equity index.
+
+**Impulse responses: SP500–BTC return spillovers**
+
+- A one-standard-deviation positive shock to SP500 generates a **short-lived positive response in BTC returns**: BTC tends to rise on the next day, with the effect quickly dying out within 2–3 days and remaining within the 95% bootstrap band afterwards.
+- In contrast, shocks to BTC have **very small and statistically weak effects on SP500**; the response of SP500 stays close to zero and is largely contained within the confidence bands at all horizons.
+- These IRF patterns are consistent with our Granger tests: **return spillovers are mostly one-directional from equities to BTC**, with BTC behaving like a high-beta asset that reacts to equity market conditions rather than driving them.
+
+**Impulse responses: Nasdaq–BTC**
+
+- The Nasdaq–BTC system shows a very similar pattern: a positive shock to Nasdaq leads to a short-term increase in BTC returns, while BTC shocks have negligible impact on Nasdaq.
+- This reinforces the view that **crypto returns primarily react to broad equity market shocks**, especially in tech-heavy indices, rather than serving as a leading indicator for them.
+
+**Takeaways from Block 2: Granger & VAR**
+
+- At the daily horizon, **we do not find strong Granger causality** between SP500 and BTC in most sub-periods. Over the full sample there is only weak evidence that SP500 leads BTC (p ≈ 0.09), while BTC almost never Granger-causes SP500.
+- Impulse response functions show a clear asymmetry in return spillovers:
+  - A positive shock to SP500 or Nasdaq generates a **short-lived positive response in BTC returns** (around 1% on the next day), with the effect dying out within 2–3 days.
+  - Shocks to BTC have **very small and statistically weak effects** on SP500 and Nasdaq; responses stay close to zero within the confidence bands.
+- Combined with our correlation results, this suggests that **crypto behaves more like a high-beta asset reacting to equity market conditions** rather than a leading indicator that drives equity index returns.
+
+
+
+### block 5:
+```{r}
+##############################################
+# Block 5: Equity–Crypto Portfolios
+# 80% SP500 + 20% BTC / ETH / SOL
+##############################################
+
+# 需要的包（前面大概率已经加载过，这里再写一遍无妨）
+# install.packages("PerformanceAnalytics")
+# install.packages("tidyr")
+
+library(PerformanceAnalytics)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+##############################################
+# 5.1 Prepare return data: SP500, BTC, ETH, SOL
+##############################################
+
+# 确保这几列存在于 daily_ret
+ret_core <- na.omit(daily_ret[, c("SP500", "BTC", "ETH", "SOL")])
+
+# 转成 xts -> 方便后面用
+ret_core <- ret_core  # already xts
+
+head(ret_core)
+
+##############################################
+# 5.2 Define portfolios
+##############################################
+
+w_eq  <- 0.80
+w_cr  <- 0.20
+
+# Portfolio A: 100% SP500
+port_A <- ret_core[, "SP500"]
+
+# Portfolio B: 80% SP500 + 20% BTC
+port_B_BTC <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "BTC"]
+
+# Portfolio C: 80% SP500 + 20% ETH
+port_C_ETH <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "ETH"]
+
+# Portfolio D: 80% SP500 + 20% SOL
+port_D_SOL <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "SOL"]
+
+# 合并成一个 xts 对象
+port_all <- merge(
+  port_A,
+  port_B_BTC,
+  port_C_ETH,
+  port_D_SOL
+)
+
+colnames(port_all) <- c(
+  "A_SP500_100",
+  "B_80_20_SP500_BTC",
+  "C_80_20_SP500_ETH",
+  "D_80_20_SP500_SOL"
+)
+
+head(port_all)
+
+##############################################
+# 5.3 Portfolio performance statistics
+##############################################
+
+# 简单定义一个统计函数：年化收益、年化波动、Sharpe(0)、最大回撤
+portfolio_stats <- function(r_xts, scale = 252) {
+  r_vec <- as.numeric(r_xts)
+
+  ann_ret <- Return.annualized(r_xts, scale = scale)
+  ann_vol <- StdDev.annualized(r_xts, scale = scale)
+  sharpe  <- SharpeRatio.annualized(r_xts, Rf = 0, scale = scale)
+
+  # max drawdown
+  mdd <- maxDrawdown(r_xts)
+
+  c(
+    Ann_Return = as.numeric(ann_ret),
+    Ann_Vol    = as.numeric(ann_vol),
+    Sharpe     = as.numeric(sharpe),
+    MaxDD      = as.numeric(mdd)
+  )
+}
+
+stats_mat <- apply(port_all, 2, function(col_xts) {
+  portfolio_stats(col_xts)
+})
+
+stats_df <- as.data.frame(t(stats_mat))
+stats_df <- stats_df %>%
+  mutate(
+    Ann_Return = round(Ann_Return, 4),
+    Ann_Vol    = round(Ann_Vol, 4),
+    Sharpe     = round(Sharpe, 3),
+    MaxDD      = round(MaxDD, 4)
+  )
+
+stats_df$Portfolio <- rownames(stats_df)
+
+# 重新排个列顺序
+stats_df <- stats_df %>%
+  dplyr::select(
+    Portfolio,
+    Ann_Return,
+    Ann_Vol,
+    Sharpe,
+    MaxDD
+  )
+
+cat("\n=== Portfolio performance: SP500 vs 80/20 crypto mixes ===\n")
+print(stats_df)
+
+##############################################
+# 5.4 Cumulative return plot
+##############################################
+
+# 将组合收益转成 cumulative return
+cum_all <- cumprod(1 + port_all)
+
+cum_df <- data.frame(
+  date = as.Date(index(cum_all)),
+  coredata(cum_all)
+)
+
+cum_long <- cum_df %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Portfolio",
+    values_to = "Cum_Return"
+  )
+
+# 让图里的名字更易读一点
+cum_long$Portfolio <- factor(
+  cum_long$Portfolio,
+  levels = c(
+    "A_SP500_100",
+    "B_80_20_SP500_BTC",
+    "C_80_20_SP500_ETH",
+    "D_80_20_SP500_SOL"
+  ),
+  labels = c(
+    "A: 100% SP500",
+    "B: 80% SP500 + 20% BTC",
+    "C: 80% SP500 + 20% ETH",
+    "D: 80% SP500 + 20% SOL"
+  )
+)
+
+p_cum <- ggplot(cum_long, aes(x = date, y = Cum_Return, color = Portfolio)) +
+  geom_line() +
+  labs(
+    title = "Cumulative returns: SP500 vs 80/20 equity–crypto portfolios",
+    x     = "Date",
+    y     = "Cumulative return (gross)"
+  ) +
+  theme_minimal()
+
+print(p_cum)
+
+##############################################
+# 5.5 Simple bar chart for annualized return & vol (optional)
+##############################################
+
+stats_plot <- stats_df %>%
+  mutate(
+    Portfolio = factor(
+      Portfolio,
+      levels = c(
+        "A_SP500_100",
+        "B_80_20_SP500_BTC",
+        "C_80_20_SP500_ETH",
+        "D_80_20_SP500_SOL"
+      ),
+      labels = c(
+        "A: 100% SP500",
+        "B: 80/20 SP500–BTC",
+        "C: 80/20 SP500–ETH",
+        "D: 80/20 SP500–SOL"
+      )
+    )
+  )
+
+p_bar_ret <- ggplot(stats_plot,
+                    aes(x = Portfolio, y = Ann_Return, fill = Portfolio)) +
+  geom_col(alpha = 0.7) +
+  labs(
+    title = "Annualized return by portfolio",
+    x     = NULL,
+    y     = "Annualized return"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_bar_vol <- ggplot(stats_plot,
+                    aes(x = Portfolio, y = Ann_Vol, fill = Portfolio)) +
+  geom_col(alpha = 0.7) +
+  labs(
+    title = "Annualized volatility by portfolio",
+    x     = NULL,
+    y     = "Annualized volatility"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(p_bar_ret)
+print(p_bar_vol)
+
+##############################################
+# End of Block 5
+##############################################
+
+
+```
+
+
+
+### block 6: 
+```{r}
+##############################################
+# Block 6: Regime & tail dependence – BTC / ETH / SOL
+##############################################
+
+library(dplyr)
+library(ggplot2)
+
+# Coins to analyse
+coins <- c("BTC", "ETH", "SOL")
+
+# Base data frame: date + SP500 + all coins
+df_all <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", coins)])
+)
+
+# Define regimes: 2020–2021 vs 2022+
+date_break1 <- as.Date("2020-01-01")
+date_break2 <- as.Date("2022-01-01")
+
+df_all <- df_all %>%
+  dplyr::filter(date >= date_break1) %>%
+  dplyr::mutate(
+    Regime = dplyr::case_when(
+      date < date_break2 ~ "2020–2021",
+      TRUE               ~ "2022+"
+    )
+  )
+
+##############################################
+# 6.1 Regime-level SP500–coin correlations
+##############################################
+
+regime_stats_all <- lapply(coins, function(cn) {
+  df_all %>%
+    dplyr::select(date, Regime, SP500, coin = dplyr::all_of(cn)) %>%
+    dplyr::group_by(Coin = cn, Regime) %>%
+    dplyr::summarise(
+      n_obs        = dplyr::n(),
+      mean_SP500   = mean(SP500, na.rm = TRUE),
+      mean_coin    = mean(coin,  na.rm = TRUE),
+      sd_SP500     = sd(SP500,   na.rm = TRUE),
+      sd_coin      = sd(coin,    na.rm = TRUE),
+      corr_SP_Coin = cor(SP500,  coin, use = "pairwise.complete.obs"),
+      .groups      = "drop"
+    )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== SP500–coin correlation by regime (BTC / ETH / SOL) ===\n")
+print(regime_stats_all)
+
+# Barplot of regime correlations
+plot_regime_corr <- ggplot(regime_stats_all,
+                           aes(x = Regime, y = corr_SP_Coin, fill = Regime)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "SP500–crypto correlation across regimes",
+    x = NULL, y = "Correlation (daily returns)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(plot_regime_corr)
+
+##############################################
+# 6.2 Tail-state correlations: all vs top/bottom 10% SP500 days
+##############################################
+
+# SP500 10% quantile thresholds
+q_low  <- quantile(df_all$SP500, 0.10, na.rm = TRUE)
+q_high <- quantile(df_all$SP500, 0.90, na.rm = TRUE)
+
+tail_corr_all <- lapply(coins, function(cn) {
+  df_coin <- df_all %>%
+    dplyr::select(SP500, coin = dplyr::all_of(cn))
+
+  idx_low  <- which(df_coin$SP500 <= q_low)
+  idx_high <- which(df_coin$SP500 >= q_high)
+
+  tibble(
+    Coin      = cn,
+    Condition = c("All days", "Top 10% SP500 days", "Bottom 10% SP500 days"),
+    Corr      = c(
+      cor(df_coin$SP500,           df_coin$coin,
+          use = "pairwise.complete.obs"),
+      cor(df_coin$SP500[idx_high], df_coin$coin[idx_high],
+          use = "pairwise.complete.obs"),
+      cor(df_coin$SP500[idx_low],  df_coin$coin[idx_low],
+          use = "pairwise.complete.obs")
+    )
+  )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== SP500–coin correlation in normal vs tail states ===\n")
+print(tail_corr_all)
+
+# Barplot tail correlations
+plot_tail_corr <- ggplot(tail_corr_all,
+                         aes(x = Condition, y = Corr, fill = Condition)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "SP500–crypto correlation in normal vs tail SP500 days",
+    x = NULL, y = "Correlation (daily returns)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1),
+        legend.position = "none")
+
+print(plot_tail_corr)
+
+##############################################
+# 6.3 Joint crash probabilities: SP500 & coin bottom 10%
+##############################################
+
+joint_tail_all <- lapply(coins, function(cn) {
+  df_coin <- df_all %>%
+    dplyr::select(SP500, coin = dplyr::all_of(cn))
+
+  q_low_sp <- quantile(df_coin$SP500, 0.10, na.rm = TRUE)
+  q_low_co <- quantile(df_coin$coin,  0.10, na.rm = TRUE)
+
+  tail_sp   <- df_coin$SP500 <= q_low_sp
+  tail_coin <- df_coin$coin  <= q_low_co
+
+  p_sp   <- mean(tail_sp,   na.rm = TRUE)
+  p_coin <- mean(tail_coin, na.rm = TRUE)
+  p_both <- mean(tail_sp & tail_coin, na.rm = TRUE)
+
+  tibble(
+    Coin   = cn,
+    Metric = c("P(SP500 tail)", "P(coin tail)",
+               "P(both in bottom 10%)",
+               "P(SP tail)*P(coin tail)"),
+    Value  = c(p_sp, p_coin, p_both, p_sp * p_coin)
+  )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== Joint bottom-10% crash probabilities: SP500 & coins ===\n")
+print(joint_tail_all)
+
+# Plot: observed vs independent crash probability
+plot_joint_tail <- joint_tail_all %>%
+  dplyr::filter(Metric %in% c("P(both in bottom 10%)",
+                              "P(SP tail)*P(coin tail)")) %>%
+  dplyr::mutate(Metric = ifelse(Metric == "P(both in bottom 10%)",
+                                "Observed joint tail",
+                                "If independent")) %>%
+  ggplot(aes(x = Metric, y = Value, fill = Metric)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  labs(
+    title = "Observed vs independent crash probability",
+    x = NULL, y = "Probability"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+
+print(plot_joint_tail)
+
+##############################################
+# End of Block 6 (multi-coin)
+##############################################
+```
+
+## block 7: 
+```{r}
+##############################################
+# Block 7+: Equity shocks → BTC / ETH / SOL volatility
+##############################################
+
+library(dplyr)
+library(ggplot2)
+library(zoo)
+library(tidyr)
+
+##############################################
+# 7+.1 Build return panel for all 3 coins
+##############################################
+
+# 用 daily_ret 里现有的 SP500 / Nasdaq / BTC / ETH / SOL
+df_vol <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "Nasdaq", "BTC", "ETH", "SOL")])
+)
+
+df_vol <- na.omit(df_vol)
+
+##############################################
+# 7+.2 Construct 21-day realized vol for BTC/ETH/SOL
+##############################################
+
+make_roll_vol <- function(x, window = 21) {
+  rollapply(
+    x,
+    width = window,
+    FUN   = sd,
+    align = "right",
+    fill  = NA
+  ) * sqrt(252)  # annualized
+}
+
+df_vol <- df_vol %>%
+  mutate(
+    BTC_vol_21 = make_roll_vol(BTC),
+    ETH_vol_21 = make_roll_vol(ETH),
+    SOL_vol_21 = make_roll_vol(SOL)
+  )
+
+# 去掉最前面 window-1 天的 NA
+df_vol <- df_vol %>% filter(!is.na(BTC_vol_21))
+
+##############################################
+# 7+.3 Equity shock proxies
+##############################################
+
+df_vol <- df_vol %>%
+  mutate(
+    abs_SP500  = abs(SP500),
+    abs_Nasdaq = abs(Nasdaq)
+  )
+
+##############################################
+# 7+.4 Helper: run vol regressions for any coin
+##############################################
+
+run_vol_models <- function(df, asset) {
+  vol_name  <- paste0(asset, "_vol_21")
+  lead_name <- paste0(asset, "_vol_21_lead1")
+
+  df_asset <- df %>%
+    mutate(
+      !!lead_name := dplyr::lead(.data[[vol_name]], 1)
+    ) %>%
+    filter(!is.na(.data[[lead_name]]))
+
+  # 当期：vol_t ~ |SP500_t| + |Nasdaq_t|
+  form_contemp <- as.formula(
+    paste(vol_name, "~ abs_SP500 + abs_Nasdaq")
+  )
+  model_contemp <- lm(form_contemp, data = df_asset)
+  summ_c <- summary(model_contemp)
+
+  # 预测：vol_(t+1) ~ |SP500_t| + |Nasdaq_t|
+  form_pred <- as.formula(
+    paste(lead_name, "~ abs_SP500 + abs_Nasdaq")
+  )
+  model_pred <- lm(form_pred, data = df_asset)
+  summ_p <- summary(model_pred)
+
+  # 提取 R^2 和 F-test p-value
+  tibble(
+    Asset       = asset,
+    R2_contemp  = summ_c$r.squared,
+    pF_contemp  = pf(
+      summ_c$fstatistic[1],
+      summ_c$fstatistic[2],
+      summ_c$fstatistic[3],
+      lower.tail = FALSE
+    ),
+    R2_pred     = summ_p$r.squared,
+    pF_pred     = pf(
+      summ_p$fstatistic[1],
+      summ_p$fstatistic[2],
+      summ_p$fstatistic[3],
+      lower.tail = FALSE
+    )
+  )
+}
+
+##############################################
+# 7+.5 Run models for BTC / ETH / SOL
+##############################################
+
+vol_link_summary <- bind_rows(
+  run_vol_models(df_vol, "BTC"),
+  run_vol_models(df_vol, "ETH"),
+  run_vol_models(df_vol, "SOL")
+) %>%
+  mutate(
+    R2_contemp = round(R2_contemp, 4),
+    R2_pred    = round(R2_pred, 4),
+    pF_contemp = round(pF_contemp, 4),
+    pF_pred    = round(pF_pred, 4)
+  )
+
+cat("\n=== Equity shocks → 21d volatility (BTC / ETH / SOL) ===\n")
+print(vol_link_summary)
+
+##############################################
+# 7+.6 Plot: 21-day vol for three coins vs SP500
+##############################################
+
+# 先给 SP500 也算一个 21-day vol
+df_vol <- df_vol %>%
+  mutate(
+    SP500_vol_21 = make_roll_vol(SP500)
+  )
+
+# (a) 三个 crypto 的 vol 对比
+crypto_vol_long <- df_vol %>%
+  dplyr::select(date, BTC_vol_21, ETH_vol_21, SOL_vol_21) %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Asset",
+    values_to = "Vol_21_annualized"
+  )
+
+crypto_vol_long$Asset <- factor(
+  crypto_vol_long$Asset,
+  levels = c("BTC_vol_21", "ETH_vol_21", "SOL_vol_21"),
+  labels = c("BTC 21-day vol", "ETH 21-day vol", "SOL 21-day vol")
+)
+
+p_crypto_vol <- ggplot(crypto_vol_long,
+                       aes(x = date, y = Vol_21_annualized, color = Asset)) +
+  geom_line() +
+  labs(
+    title = "21-day annualized volatility: BTC vs ETH vs SOL",
+    x     = "Date",
+    y     = "Annualized 21-day realized volatility"
+  ) +
+  theme_minimal()
+
+print(p_crypto_vol)
+
+# (b) BTC / ETH / SOL vs SP500（可选）
+vol_vs_sp <- df_vol %>%
+  dplyr::select(date, SP500_vol_21, BTC_vol_21, ETH_vol_21, SOL_vol_21) %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Series",
+    values_to = "Vol_21_annualized"
+  )
+
+p_vol_vs_sp <- ggplot(vol_vs_sp,
+                      aes(x = date, y = Vol_21_annualized, color = Series)) +
+  geom_line(alpha = 0.7) +
+  labs(
+    title = "21-day annualized volatility: SP500 vs crypto assets",
+    x     = "Date",
+    y     = "Annualized 21-day realized volatility"
+  ) +
+  theme_minimal()
+
+print(p_vol_vs_sp)
+
+##############################################
+# End of Block 7+
+##############################################
+
+
+```
+

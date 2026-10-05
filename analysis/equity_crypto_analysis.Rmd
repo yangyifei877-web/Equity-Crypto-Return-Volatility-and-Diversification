@@ -1,0 +1,1089 @@
+---
+title: "482 final project"
+author: "Yifei Yang"
+date: "2025-12-03"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### Data source: 
+
+ We directly downloaded the daily price data of the S&P 500 Index (^GSPC), the Nasdaq Composite Index (^IXIC), and BTC/ETH/SOL against the US dollar from Yahoo Finance using the command "quantmod::getSymbols(src = 'yahoo')". Then, in R language, we constructed the daily and weekly logarithmic returns from these series of data.
+
+### block 1:
+```{r}
+library(quantmod)
+library(PerformanceAnalytics)
+library(TTR)
+library(ggplot2)
+symbols <- c("^GSPC", "^IXIC", "BTC-USD", "ETH-USD", "SOL-USD")
+
+data_list <- lapply(symbols, function(sym) {
+  getSymbols(
+    Symbols     = sym,
+    src         = "yahoo",
+    from        = "2018-01-01",
+    auto.assign = FALSE
+  )
+})
+names(data_list) <- symbols
+prices <- do.call(merge, lapply(data_list, Cl))
+colnames(prices) <- c("SP500", "Nasdaq", "BTC", "ETH", "SOL")
+prices <- na.omit(prices)
+
+daily_ret <- na.omit(diff(log(prices)))
+
+weekly_prices <- apply.weekly(prices, last)
+weekly_ret    <- na.omit(diff(log(weekly_prices)))
+daily_stats_raw  <- table.Stats(daily_ret)
+weekly_stats_raw <- table.Stats(weekly_ret)
+daily_stats  <- t(daily_stats_raw)
+weekly_stats <- t(weekly_stats_raw)
+
+cat("=== Daily return summary stats ===\n")
+print(round(daily_stats, 4))
+
+cat("\n=== Weekly return summary stats ===\n")
+print(round(weekly_stats, 4))
+
+cor_daily  <- cor(daily_ret)
+cor_weekly <- cor(weekly_ret)
+cat("\n=== Correlation matrix (daily returns) ===\n")
+print(round(cor_daily, 3))
+cat("\n=== Correlation matrix (weekly returns) ===\n")
+print(round(cor_weekly, 3))
+
+window_size <- 60
+
+roll_cor_sp_btc <- runCor(
+  x = daily_ret[, "SP500"],
+  y = daily_ret[, "BTC"],
+  n = window_size
+)
+
+roll_cor_nas_btc <- runCor(
+  x = daily_ret[, "Nasdaq"],
+  y = daily_ret[, "BTC"],
+  n = window_size
+)
+
+roll_cor_df <- data.frame(
+  date           = index(roll_cor_sp_btc),
+  cor_SP500_BTC  = as.numeric(roll_cor_sp_btc),
+  cor_Nasdaq_BTC = as.numeric(roll_cor_nas_btc)
+)
+
+p1 <- ggplot(roll_cor_df, aes(x = date, y = cor_SP500_BTC)) +
+  geom_line() +
+  labs(
+    title = "60-day Rolling Correlation: SP500 vs BTC",
+    x     = "Date",
+    y     = "Correlation"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(roll_cor_df, aes(x = date, y = cor_Nasdaq_BTC)) +
+  geom_line() +
+  labs(
+    title = "60-day Rolling Correlation: Nasdaq vs BTC",
+    x     = "Date",
+    y     = "Correlation"
+  ) +
+  theme_minimal()
+
+print(p1)
+print(p2)
+```
+
+```{r}
+library(reshape2)
+cor_daily_long  <- melt(cor_daily,  varnames = c("Asset1", "Asset2"), value.name = "Corr")
+cor_weekly_long <- melt(cor_weekly, varnames = c("Asset1", "Asset2"), value.name = "Corr")
+
+p_cor_daily <- ggplot(cor_daily_long, aes(x = Asset1, y = Asset2, fill = Corr)) +
+  geom_tile() +
+  geom_text(aes(label = round(Corr, 2)), size = 3) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+  labs(
+    title = "Correlation Matrix (Daily Returns)",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_cor_weekly <- ggplot(cor_weekly_long, aes(x = Asset1, y = Asset2, fill = Corr)) +
+  geom_tile() +
+  geom_text(aes(label = round(Corr, 2)), size = 3) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+  labs(
+    title = "Correlation Matrix (Weekly Returns)",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p_cor_daily)
+print(p_cor_weekly)
+
+```
+
+```{r}
+event_periods <- data.frame(
+  start = as.Date(c("2020-02-15", "2020-11-01", "2022-04-01")),
+  end   = as.Date(c("2020-05-31", "2021-12-31", "2023-03-31")),
+  label = c("COVID Crash", "Crypto Bull Run", "Crypto Winter")
+)
+
+plot_rolling_with_events <- function(df, y_col, title) {
+  ggplot(df, aes(x = date, y = .data[[y_col]])) +
+    # 阴影区
+    geom_rect(
+      data = event_periods,
+      inherit.aes = FALSE,
+      aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+      alpha = 0.1
+    ) +
+    geom_line() +
+    # 事件标签：用 start + (end - start)/2 当作中点
+    geom_text(
+      data = event_periods,
+      inherit.aes = FALSE,
+      aes(
+        x = start + (end - start) / 2,
+        y = 0.95,
+        label = label
+      ),
+      size = 3
+    ) +
+    labs(
+      title = title,
+      x     = "Date",
+      y     = "60-day Rolling Correlation"
+    ) +
+    ylim(-0.2, 1.0) +
+    theme_minimal()
+}
+
+p1_evt <- plot_rolling_with_events(
+  roll_cor_df,
+  "cor_SP500_BTC",
+  "60-day Rolling Correlation: SP500 vs BTC"
+)
+
+p2_evt <- plot_rolling_with_events(
+  roll_cor_df,
+  "cor_Nasdaq_BTC",
+  "60-day Rolling Correlation: Nasdaq vs BTC"
+)
+
+print(p1_evt)
+print(p2_evt)
+
+
+```
+
+### block 2:
+```{r}
+library(vars)
+library(dplyr)
+library(ggplot2)
+var_data_full <- na.omit(daily_ret[, c("SP500", "Nasdaq", "BTC")])
+var_data_full <- as.data.frame(var_data_full)
+head(var_data_full)
+summary(var_data_full)
+
+lag_selection <- VARselect(var_data_full, lag.max = 10, type = "const")
+lag_selection
+
+p_aic <- lag_selection$selection["AIC(n)"]
+p_bic <- lag_selection$selection["SC(n)"]
+p_aic
+p_bic
+
+p_use <- as.numeric(p_aic)
+
+var_model <- VAR(var_data_full, p = p_use, type = "const")
+summary(var_model)
+
+granger_SP500_to_BTC <- causality(var_model, cause = "SP500")
+cat("=== 3-var VAR: Granger test SP500 causes BTC (joint) ===\n")
+print(granger_SP500_to_BTC)
+
+granger_BTC_to_SP500 <- causality(var_model, cause = "BTC")
+cat("\n=== 3-var VAR: Granger test BTC causes SP500 (joint) ===\n")
+print(granger_BTC_to_SP500)
+
+granger_Nasdaq_to_BTC <- causality(var_model, cause = "Nasdaq")
+cat("\n=== 3-var VAR: Granger test Nasdaq causes BTC (joint) ===\n")
+print(granger_Nasdaq_to_BTC)
+
+cat("\n=== 3-var VAR: Granger test BTC causes Nasdaq (joint) ===\n")
+granger_BTC_to_Nasdaq <- causality(var_model, cause = "BTC")
+print(granger_BTC_to_Nasdaq)
+
+data_SP500_BTC <- as.data.frame(na.omit(daily_ret[, c("SP500", "BTC")]))
+
+lag_sel_SB <- VARselect(data_SP500_BTC, lag.max = 10, type = "const")
+lag_sel_SB
+p_SB <- lag_sel_SB$selection["AIC(n)"]
+
+var_SB <- VAR(data_SP500_BTC, p = p_SB, type = "const")
+summary(var_SB)
+
+cat("\n=== 2-var VAR (SP500, BTC): SP500 -> BTC? ===\n")
+print(causality(var_SB, cause = "SP500"))
+
+cat("\n=== 2-var VAR (SP500, BTC): BTC -> SP500? ===\n")
+print(causality(var_SB, cause = "BTC"))
+
+
+data_Nasdaq_BTC <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", "BTC")]))
+
+lag_sel_NB <- VARselect(data_Nasdaq_BTC, lag.max = 10, type = "const")
+lag_sel_NB
+p_NB <- lag_sel_NB$selection["AIC(n)"]
+
+var_NB <- VAR(data_Nasdaq_BTC, p = p_NB, type = "const")
+summary(var_NB)
+
+cat("\n=== 2-var VAR (Nasdaq, BTC): Nasdaq -> BTC? ===\n")
+print(causality(var_NB, cause = "Nasdaq"))
+
+cat("\n=== 2-var VAR (Nasdaq, BTC): BTC -> Nasdaq? ===\n")
+print(causality(var_NB, cause = "BTC"))
+
+
+set.seed(123) 
+
+irf_SP500_to_BTC <- irf(
+  var_SB,
+  impulse  = "SP500",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_SP500 <- irf(
+  var_SB,
+  impulse  = "BTC",
+  response = "SP500",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_Nasdaq_to_BTC <- irf(
+  var_NB,
+  impulse  = "Nasdaq",
+  response = "BTC",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+irf_BTC_to_Nasdaq <- irf(
+  var_NB,
+  impulse  = "BTC",
+  response = "Nasdaq",
+  n.ahead  = 10,
+  boot     = TRUE
+)
+
+plot_irf_gg <- function(irf_obj, title, ylab) {
+  irf_vec   <- as.numeric(irf_obj$irf[[1]])
+  lower_vec <- as.numeric(irf_obj$Lower[[1]])
+  upper_vec <- as.numeric(irf_obj$Upper[[1]])
+  horizon   <- seq_along(irf_vec)
+
+  df <- data.frame(
+    horizon = horizon,
+    irf     = irf_vec,
+    lower   = lower_vec,
+    upper   = upper_vec
+  )
+
+  ggplot(df, aes(x = horizon)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper, fill = "95% CI"), alpha = 0.2) +
+    geom_line(aes(y = irf, color = "IRF"), size = 0.7) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    scale_color_manual("", values = c("IRF" = "black")) +
+    scale_fill_manual("", values = c("95% CI" = "grey80")) +
+    labs(title = title, x = "Horizon (days)", y = ylab) +
+    theme_minimal()
+}
+
+p_irf_SP500_to_BTC  <- plot_irf_gg(irf_SP500_to_BTC,  "IRF: SP500 shock → BTC",    "BTC return")
+p_irf_BTC_to_SP500  <- plot_irf_gg(irf_BTC_to_SP500,  "IRF: BTC shock → SP500",    "SP500 return")
+p_irf_Nasdaq_to_BTC <- plot_irf_gg(irf_Nasdaq_to_BTC, "IRF: Nasdaq shock → BTC",   "BTC return")
+p_irf_BTC_to_Nasdaq <- plot_irf_gg(irf_BTC_to_Nasdaq, "IRF: BTC shock → Nasdaq",   "Nasdaq return")
+
+print(p_irf_SP500_to_BTC)
+print(p_irf_BTC_to_SP500)
+print(p_irf_Nasdaq_to_BTC)
+print(p_irf_BTC_to_Nasdaq)
+
+df_SB <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "BTC")])
+)
+
+date_break1 <- as.Date("2020-01-01")
+date_break2 <- as.Date("2022-01-01")  
+
+df_SB <- df_SB %>%
+  mutate(
+    regime = case_when(
+      date <  date_break1 ~ "Pre-2020",
+      date >= date_break1 & date < date_break2 ~ "2020-2021",
+      date >= date_break2 ~ "2022+"
+    )
+  )
+
+run_granger_pair <- function(data_2var, max_lag = 10) {
+  data_2var <- na.omit(data_2var)
+
+  lag_sel <- VARselect(data_2var, lag.max = max_lag, type = "const")
+  p_use   <- lag_sel$selection["AIC(n)"]
+
+  var_mod <- VAR(data_2var, p = p_use, type = "const")
+
+  pv_SP500_to_BTC <- causality(var_mod, cause = "SP500")$Granger[["p.value"]]
+
+  pv_BTC_to_SP500 <- causality(var_mod, cause = "BTC")$Granger[["p.value"]]
+
+  tibble(
+    lag_AIC        = as.numeric(p_use),
+    p_SP500_to_BTC = as.numeric(pv_SP500_to_BTC),
+    p_BTC_to_SP500 = as.numeric(pv_BTC_to_SP500)
+  )
+}
+
+
+
+full_res <- run_granger_pair(df_SB[, c("SP500", "BTC")]) %>%
+  mutate(Regime = "Full sample")
+
+res_by_regime <- df_SB %>%
+  group_by(Regime = regime) %>%
+  group_modify(~ run_granger_pair(.x[, c("SP500", "BTC")]))
+
+granger_summary <- bind_rows(full_res, res_by_regime) %>%
+  dplyr::select(Regime, lag_AIC, p_SP500_to_BTC, p_BTC_to_SP500) %>%
+  mutate(
+    p_SP500_to_BTC = round(p_SP500_to_BTC, 4),
+    p_BTC_to_SP500 = round(p_BTC_to_SP500, 4)
+  )
+
+cat("\n=== Granger causality summary by regime: SP500 & BTC ===\n")
+print(granger_summary)
+
+run_equity_crypto_granger <- function(coin_name, max_lag = 10) {
+  # SP500 & coin
+  data_SP <- as.data.frame(na.omit(daily_ret[, c("SP500", coin_name)]))
+  lag_SP  <- VARselect(data_SP, lag.max = max_lag, type = "const")
+  p_SP    <- lag_SP$selection["AIC(n)"]
+  var_SP  <- VAR(data_SP, p = p_SP, type = "const")
+
+  pv_SP_to_coin  <- causality(var_SP, cause = "SP500")$Granger[["p.value"]]
+  pv_coin_to_SP  <- causality(var_SP, cause = coin_name)$Granger[["p.value"]]
+
+  # Nasdaq & coin
+  data_N <- as.data.frame(na.omit(daily_ret[, c("Nasdaq", coin_name)]))
+  lag_N  <- VARselect(data_N, lag.max = max_lag, type = "const")
+  p_N    <- lag_N$selection["AIC(n)"]
+  var_N  <- VAR(data_N, p = p_N, type = "const")
+
+  pv_N_to_coin   <- causality(var_N, cause = "Nasdaq")$Granger[["p.value"]]
+  pv_coin_to_N   <- causality(var_N, cause = coin_name)$Granger[["p.value"]]
+
+  tibble(
+    Coin              = coin_name,
+    lag_SP_AIC        = as.numeric(p_SP),
+    lag_Nasdaq_AIC    = as.numeric(p_N),
+    p_SP500_to_Coin   = as.numeric(pv_SP_to_coin),
+    p_Coin_to_SP500   = as.numeric(pv_coin_to_SP),
+    p_Nasdaq_to_Coin  = as.numeric(pv_N_to_coin),
+    p_Coin_to_Nasdaq  = as.numeric(pv_coin_to_N)
+  )
+}
+
+coins <- c("BTC", "ETH", "SOL")
+
+granger_multi <- bind_rows(
+  lapply(coins, run_equity_crypto_granger)
+) %>%
+  mutate(
+    p_SP500_to_Coin  = round(p_SP500_to_Coin, 4),
+    p_Coin_to_SP500  = round(p_Coin_to_SP500, 4),
+    p_Nasdaq_to_Coin = round(p_Nasdaq_to_Coin, 4),
+    p_Coin_to_Nasdaq = round(p_Coin_to_Nasdaq, 4)
+  )
+
+cat("\n=== Multi-coin Granger robustness: Equity ↔ Crypto (BTC / ETH / SOL) ===\n")
+print(granger_multi)
+
+```
+
+### block 3:
+```{r}
+library(rmgarch)
+library(rugarch)
+library(dplyr)
+library(ggplot2)
+
+uspec <- ugarchspec(
+  mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  distribution.model = "norm"
+)
+
+dcc_spec <- dccspec(
+  uspec = multispec(replicate(2, uspec)),
+  dccOrder = c(1, 1),
+  distribution = "mvnorm"
+)
+
+
+fit_dcc_pair <- function(ret_xts, coin_name) {
+  data_pair <- na.omit(ret_xts[, c("SP500", coin_name)])
+  
+  dcc_fit <- dccfit(dcc_spec, data = data_pair)
+  
+  R_t <- rcor(dcc_fit)
+  cor_t <- as.numeric(R_t[1, 2, ])
+  dates <- index(data_pair)
+  
+  df_cor <- data.frame(
+    date = as.Date(dates),
+    dcc_corr = cor_t
+  )
+  
+  stats <- data.frame(
+    Coin = coin_name,
+    mean_corr = mean(cor_t, na.rm = TRUE),
+    min_corr = min(cor_t, na.rm = TRUE),
+    max_corr = max(cor_t, na.rm = TRUE)
+  )
+  
+  list(
+    fit   = dcc_fit,
+    corr  = df_cor,
+    stats = stats
+  )
+}
+
+
+stopifnot(all(c("SP500", "BTC", "ETH", "SOL") %in% colnames(daily_ret)))
+
+dcc_BTC <- fit_dcc_pair(daily_ret, "BTC")
+dcc_ETH <- fit_dcc_pair(daily_ret, "ETH")
+dcc_SOL <- fit_dcc_pair(daily_ret, "SOL")
+
+dcc_corr_stats <- bind_rows(
+  dcc_BTC$stats,
+  dcc_ETH$stats,
+  dcc_SOL$stats
+) %>%
+  mutate(
+    mean_corr = round(mean_corr, 3),
+    min_corr = round(min_corr, 3),
+    max_corr = round(max_corr, 3)
+  )
+
+cat("DCC-GARCH: Time-varying SP500–Crypto correlations\n")
+print(dcc_corr_stats)
+
+
+p_dcc_BTC <- ggplot(dcc_BTC$corr, aes(x = date, y = dcc_corr)) +
+  geom_line() +
+  labs(
+    title = "DCC-GARCH Correlation: SP500 - BTC",
+    x = "Date",
+    y = "Dynamic correlation"
+  ) +
+  theme_minimal()
+
+p_dcc_ETH <- ggplot(dcc_ETH$corr, aes(x = date, y = dcc_corr)) +
+  geom_line() +
+  labs(
+    title = "DCC-GARCH Correlation: SP500 - ETH",
+    x = "Date",
+    y = "Dynamic correlation"
+  ) +
+  theme_minimal()
+
+p_dcc_SOL <- ggplot(dcc_SOL$corr, aes(x = date, y = dcc_corr)) +
+  geom_line() +
+  labs(
+    title = "DCC-GARCH Correlation: SP500 - SOL",
+    x = "Date",
+    y = "Dynamic correlation"
+  ) +
+  theme_minimal()
+
+print(p_dcc_BTC)
+print(p_dcc_ETH)
+print(p_dcc_SOL)
+```
+
+### block 4:
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(vars)
+library(tibble)
+library(zoo)
+
+vol_base <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "BTC", "ETH", "SOL")])
+)
+
+vol_base <- vol_base %>%
+  mutate(
+    SP500_vol = SP500^2,
+    BTC_vol = BTC^2,
+    ETH_vol = ETH^2,
+    SOL_vol = SOL^2
+  )
+
+
+vol_21d <- vol_base %>%
+  arrange(date) %>%
+  transmute(
+    date,
+    SP500 = sqrt(252) * sqrt(rollapply(SP500_vol, 21, mean,
+                                       align = "right", fill = NA)),
+    BTC = sqrt(252) * sqrt(rollapply(BTC_vol, 21, mean,
+                                       align = "right", fill = NA)),
+    ETH = sqrt(252) * sqrt(rollapply(ETH_vol, 21, mean,
+                                       align = "right", fill = NA)),
+    SOL = sqrt(252) * sqrt(rollapply(SOL_vol, 21, mean,
+                                       align = "right", fill = NA))
+  ) %>%
+  pivot_longer(-date, names_to = "Series", values_to = "RealizedVol")
+
+p_vol_21d <- ggplot(vol_21d, aes(x = date, y = RealizedVol)) +
+  geom_line() +
+  facet_wrap(~ Series, ncol = 1, scales = "free_y") +
+  labs(
+    title = "21-day Realized Volatility (annualized)",
+    x = "Date",
+    y = "Realized volatility"
+  ) +
+  theme_minimal()
+
+print(p_vol_21d)
+
+run_vol_VAR <- function(coin_name, max_lag = 10) {
+
+  df2 <- vol_base %>%
+    select(date, SP500_vol,
+           coin_vol = all_of(paste0(coin_name, "_vol"))) %>%
+    drop_na()
+
+  lag_sel <- VARselect(df2[, c("SP500_vol", "coin_vol")],
+                       lag.max = max_lag,
+                       type = "const")
+  p_use <- lag_sel$selection["AIC(n)"]
+
+  var_mod <- VAR(df2[, c("SP500_vol", "coin_vol")],
+                 p = p_use, type = "const")
+
+  p_SP_to_coin <- causality(var_mod, cause = "SP500_vol")$Granger[["p.value"]]
+  p_coin_to_SP <- causality(var_mod, cause = "coin_vol")$Granger[["p.value"]]
+
+  tibble(
+    Coin = coin_name,
+    lag_AIC = as.numeric(p_use),
+    p_SP500vol_to_Coinvol = as.numeric(p_SP_to_coin),
+    p_Coinvol_to_SP500vol = as.numeric(p_coin_to_SP)
+  )
+}
+
+coins_vol <- c("BTC", "ETH", "SOL")
+
+vol_gc_summary <- bind_rows(lapply(coins_vol, run_vol_VAR)) %>%
+  mutate(
+    p_SP500vol_to_Coinvol = round(p_SP500vol_to_Coinvol, 4),
+    p_Coinvol_to_SP500vol = round(p_Coinvol_to_SP500vol, 4)
+  )
+
+cat("\n Block 4: Granger causality in volatility (SP500 vs Crypto) \n")
+print(vol_gc_summary)
+```
+
+
+### block 5:
+```{r}
+library(PerformanceAnalytics)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+ret_core <- na.omit(daily_ret[, c("SP500", "BTC", "ETH", "SOL")])
+
+
+ret_core <- ret_core  
+
+head(ret_core)
+
+
+
+w_eq  <- 0.80
+w_cr  <- 0.20
+
+
+port_A <- ret_core[, "SP500"]
+port_B_BTC <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "BTC"]
+port_C_ETH <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "ETH"]
+port_D_SOL <- w_eq * ret_core[, "SP500"] + w_cr * ret_core[, "SOL"]
+
+port_all <- merge(
+  port_A,
+  port_B_BTC,
+  port_C_ETH,
+  port_D_SOL
+)
+
+colnames(port_all) <- c(
+  "A_SP500_100",
+  "B_80_20_SP500_BTC",
+  "C_80_20_SP500_ETH",
+  "D_80_20_SP500_SOL"
+)
+
+head(port_all)
+
+portfolio_stats <- function(r_xts, scale = 252) {
+  r_vec <- as.numeric(r_xts)
+
+  ann_ret <- Return.annualized(r_xts, scale = scale)
+  ann_vol <- StdDev.annualized(r_xts, scale = scale)
+  sharpe  <- SharpeRatio.annualized(r_xts, Rf = 0, scale = scale)
+  mdd <- maxDrawdown(r_xts)
+  c(
+    Ann_Return = as.numeric(ann_ret),
+    Ann_Vol    = as.numeric(ann_vol),
+    Sharpe     = as.numeric(sharpe),
+    MaxDD      = as.numeric(mdd)
+  )
+}
+
+stats_mat <- apply(port_all, 2, function(col_xts) {
+  portfolio_stats(col_xts)
+})
+
+stats_df <- as.data.frame(t(stats_mat))
+stats_df <- stats_df %>%
+  mutate(
+    Ann_Return = round(Ann_Return, 4),
+    Ann_Vol    = round(Ann_Vol, 4),
+    Sharpe     = round(Sharpe, 3),
+    MaxDD      = round(MaxDD, 4)
+  )
+
+stats_df$Portfolio <- rownames(stats_df)
+
+stats_df <- stats_df %>%
+  dplyr::select(
+    Portfolio,
+    Ann_Return,
+    Ann_Vol,
+    Sharpe,
+    MaxDD
+  )
+
+cat("\n=== Portfolio performance: SP500 vs 80/20 crypto mixes ===\n")
+print(stats_df)
+
+cum_all <- cumprod(1 + port_all)
+
+cum_df <- data.frame(
+  date = as.Date(index(cum_all)),
+  coredata(cum_all)
+)
+
+cum_long <- cum_df %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Portfolio",
+    values_to = "Cum_Return"
+  )
+
+cum_long$Portfolio <- factor(
+  cum_long$Portfolio,
+  levels = c(
+    "A_SP500_100",
+    "B_80_20_SP500_BTC",
+    "C_80_20_SP500_ETH",
+    "D_80_20_SP500_SOL"
+  ),
+  labels = c(
+    "A: 100% SP500",
+    "B: 80% SP500 + 20% BTC",
+    "C: 80% SP500 + 20% ETH",
+    "D: 80% SP500 + 20% SOL"
+  )
+)
+
+p_cum <- ggplot(cum_long, aes(x = date, y = Cum_Return, color = Portfolio)) +
+  geom_line() +
+  labs(
+    title = "Cumulative returns: SP500 vs 80/20 equity–crypto portfolios",
+    x     = "Date",
+    y     = "Cumulative return (gross)"
+  ) +
+  theme_minimal()
+
+print(p_cum)
+
+stats_plot <- stats_df %>%
+  mutate(
+    Portfolio = factor(
+      Portfolio,
+      levels = c(
+        "A_SP500_100",
+        "B_80_20_SP500_BTC",
+        "C_80_20_SP500_ETH",
+        "D_80_20_SP500_SOL"
+      ),
+      labels = c(
+        "A: 100% SP500",
+        "B: 80/20 SP500–BTC",
+        "C: 80/20 SP500–ETH",
+        "D: 80/20 SP500–SOL"
+      )
+    )
+  )
+
+p_bar_ret <- ggplot(stats_plot,
+                    aes(x = Portfolio, y = Ann_Return, fill = Portfolio)) +
+  geom_col(alpha = 0.7) +
+  labs(
+    title = "Annualized return by portfolio",
+    x     = NULL,
+    y     = "Annualized return"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_bar_vol <- ggplot(stats_plot,
+                    aes(x = Portfolio, y = Ann_Vol, fill = Portfolio)) +
+  geom_col(alpha = 0.7) +
+  labs(
+    title = "Annualized volatility by portfolio",
+    x     = NULL,
+    y     = "Annualized volatility"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(p_bar_ret)
+print(p_bar_vol)
+
+```
+
+
+
+### block 6: 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+coins <- c("BTC", "ETH", "SOL")
+
+df_all <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", coins)])
+)
+
+date_break1 <- as.Date("2020-01-01")
+date_break2 <- as.Date("2022-01-01")
+
+df_all <- df_all %>%
+  dplyr::filter(date >= date_break1) %>%
+  dplyr::mutate(
+    Regime = dplyr::case_when(
+      date < date_break2 ~ "2020–2021",
+      TRUE               ~ "2022+"
+    )
+  )
+
+
+regime_stats_all <- lapply(coins, function(cn) {
+  df_all %>%
+    dplyr::select(date, Regime, SP500, coin = dplyr::all_of(cn)) %>%
+    dplyr::group_by(Coin = cn, Regime) %>%
+    dplyr::summarise(
+      n_obs        = dplyr::n(),
+      mean_SP500   = mean(SP500, na.rm = TRUE),
+      mean_coin    = mean(coin,  na.rm = TRUE),
+      sd_SP500     = sd(SP500,   na.rm = TRUE),
+      sd_coin      = sd(coin,    na.rm = TRUE),
+      corr_SP_Coin = cor(SP500,  coin, use = "pairwise.complete.obs"),
+      .groups      = "drop"
+    )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== SP500–coin correlation by regime (BTC / ETH / SOL) ===\n")
+print(regime_stats_all)
+
+
+plot_regime_corr <- ggplot(regime_stats_all,
+                           aes(x = Regime, y = corr_SP_Coin, fill = Regime)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "SP500–crypto correlation across regimes",
+    x = NULL, y = "Correlation (daily returns)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(plot_regime_corr)
+
+
+
+q_low  <- quantile(df_all$SP500, 0.10, na.rm = TRUE)
+q_high <- quantile(df_all$SP500, 0.90, na.rm = TRUE)
+
+tail_corr_all <- lapply(coins, function(cn) {
+  df_coin <- df_all %>%
+    dplyr::select(SP500, coin = dplyr::all_of(cn))
+
+  idx_low  <- which(df_coin$SP500 <= q_low)
+  idx_high <- which(df_coin$SP500 >= q_high)
+
+  tibble(
+    Coin      = cn,
+    Condition = c("All days", "Top 10% SP500 days", "Bottom 10% SP500 days"),
+    Corr      = c(
+      cor(df_coin$SP500,           df_coin$coin,
+          use = "pairwise.complete.obs"),
+      cor(df_coin$SP500[idx_high], df_coin$coin[idx_high],
+          use = "pairwise.complete.obs"),
+      cor(df_coin$SP500[idx_low],  df_coin$coin[idx_low],
+          use = "pairwise.complete.obs")
+    )
+  )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== SP500–coin correlation in normal vs tail states ===\n")
+print(tail_corr_all)
+
+
+plot_tail_corr <- ggplot(tail_corr_all,
+                         aes(x = Condition, y = Corr, fill = Condition)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "SP500–crypto correlation in normal vs tail SP500 days",
+    x = NULL, y = "Correlation (daily returns)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1),
+        legend.position = "none")
+
+print(plot_tail_corr)
+
+
+joint_tail_all <- lapply(coins, function(cn) {
+  df_coin <- df_all %>%
+    dplyr::select(SP500, coin = dplyr::all_of(cn))
+
+  q_low_sp <- quantile(df_coin$SP500, 0.10, na.rm = TRUE)
+  q_low_co <- quantile(df_coin$coin,  0.10, na.rm = TRUE)
+
+  tail_sp   <- df_coin$SP500 <= q_low_sp
+  tail_coin <- df_coin$coin  <= q_low_co
+
+  p_sp   <- mean(tail_sp,   na.rm = TRUE)
+  p_coin <- mean(tail_coin, na.rm = TRUE)
+  p_both <- mean(tail_sp & tail_coin, na.rm = TRUE)
+
+  tibble(
+    Coin   = cn,
+    Metric = c("P(SP500 tail)", "P(coin tail)",
+               "P(both in bottom 10%)",
+               "P(SP tail)*P(coin tail)"),
+    Value  = c(p_sp, p_coin, p_both, p_sp * p_coin)
+  )
+}) %>% dplyr::bind_rows()
+
+cat("\n=== Joint bottom-10% crash probabilities: SP500 & coins ===\n")
+print(joint_tail_all)
+
+plot_joint_tail <- joint_tail_all %>%
+  dplyr::filter(Metric %in% c("P(both in bottom 10%)",
+                              "P(SP tail)*P(coin tail)")) %>%
+  dplyr::mutate(Metric = ifelse(Metric == "P(both in bottom 10%)",
+                                "Observed joint tail",
+                                "If independent")) %>%
+  ggplot(aes(x = Metric, y = Value, fill = Metric)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  facet_wrap(~ Coin) +
+  labs(
+    title = "Observed vs independent crash probability",
+    x = NULL, y = "Probability"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+
+print(plot_joint_tail)
+
+
+```
+
+## block 7: 
+```{r}
+library(dplyr)
+library(ggplot2)
+library(zoo)
+library(tidyr)
+
+df_vol <- data.frame(
+  date = as.Date(index(daily_ret)),
+  coredata(daily_ret[, c("SP500", "Nasdaq", "BTC", "ETH", "SOL")])
+)
+
+df_vol <- na.omit(df_vol)
+make_roll_vol <- function(x, window = 21) {
+  rollapply(
+    x,
+    width = window,
+    FUN   = sd,
+    align = "right",
+    fill  = NA
+  ) * sqrt(252)  # annualized
+}
+
+df_vol <- df_vol %>%
+  mutate(
+    BTC_vol_21 = make_roll_vol(BTC),
+    ETH_vol_21 = make_roll_vol(ETH),
+    SOL_vol_21 = make_roll_vol(SOL)
+  )
+
+df_vol <- df_vol %>% filter(!is.na(BTC_vol_21))
+df_vol <- df_vol %>%
+  mutate(
+    abs_SP500  = abs(SP500),
+    abs_Nasdaq = abs(Nasdaq)
+  )
+
+run_vol_models <- function(df, asset) {
+  vol_name  <- paste0(asset, "_vol_21")
+  lead_name <- paste0(asset, "_vol_21_lead1")
+
+  df_asset <- df %>%
+    mutate(
+      !!lead_name := dplyr::lead(.data[[vol_name]], 1)
+    ) %>%
+    filter(!is.na(.data[[lead_name]]))
+  
+  form_contemp <- as.formula(
+    paste(vol_name, "~ abs_SP500 + abs_Nasdaq")
+  )
+  model_contemp <- lm(form_contemp, data = df_asset)
+  summ_c <- summary(model_contemp)
+  
+  form_pred <- as.formula(
+    paste(lead_name, "~ abs_SP500 + abs_Nasdaq")
+  )
+  model_pred <- lm(form_pred, data = df_asset)
+  summ_p <- summary(model_pred)
+  
+  tibble(
+    Asset       = asset,
+    R2_contemp  = summ_c$r.squared,
+    pF_contemp  = pf(
+      summ_c$fstatistic[1],
+      summ_c$fstatistic[2],
+      summ_c$fstatistic[3],
+      lower.tail = FALSE
+    ),
+    R2_pred     = summ_p$r.squared,
+    pF_pred     = pf(
+      summ_p$fstatistic[1],
+      summ_p$fstatistic[2],
+      summ_p$fstatistic[3],
+      lower.tail = FALSE
+    )
+  )
+}
+
+vol_link_summary <- bind_rows(
+  run_vol_models(df_vol, "BTC"),
+  run_vol_models(df_vol, "ETH"),
+  run_vol_models(df_vol, "SOL")
+) %>%
+  mutate(
+    R2_contemp = round(R2_contemp, 4),
+    R2_pred    = round(R2_pred, 4),
+    pF_contemp = round(pF_contemp, 4),
+    pF_pred    = round(pF_pred, 4)
+  )
+
+cat("\n=== Equity shocks → 21d volatility (BTC / ETH / SOL) ===\n")
+print(vol_link_summary)
+
+df_vol <- df_vol %>%
+  mutate(
+    SP500_vol_21 = make_roll_vol(SP500)
+  )
+
+crypto_vol_long <- df_vol %>%
+  dplyr::select(date, BTC_vol_21, ETH_vol_21, SOL_vol_21) %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Asset",
+    values_to = "Vol_21_annualized"
+  )
+
+crypto_vol_long$Asset <- factor(
+  crypto_vol_long$Asset,
+  levels = c("BTC_vol_21", "ETH_vol_21", "SOL_vol_21"),
+  labels = c("BTC 21-day vol", "ETH 21-day vol", "SOL 21-day vol")
+)
+
+p_crypto_vol <- ggplot(crypto_vol_long,
+                       aes(x = date, y = Vol_21_annualized, color = Asset)) +
+  geom_line() +
+  labs(
+    title = "21-day annualized volatility: BTC vs ETH vs SOL",
+    x     = "Date",
+    y     = "Annualized 21-day realized volatility"
+  ) +
+  theme_minimal()
+
+print(p_crypto_vol)
+
+vol_vs_sp <- df_vol %>%
+  dplyr::select(date, SP500_vol_21, BTC_vol_21, ETH_vol_21, SOL_vol_21) %>%
+  tidyr::pivot_longer(
+    cols      = -date,
+    names_to  = "Series",
+    values_to = "Vol_21_annualized"
+  )
+
+p_vol_vs_sp <- ggplot(vol_vs_sp,
+                      aes(x = date, y = Vol_21_annualized, color = Series)) +
+  geom_line(alpha = 0.7) +
+  labs(
+    title = "21-day annualized volatility: SP500 vs crypto assets",
+    x     = "Date",
+    y     = "Annualized 21-day realized volatility"
+  ) +
+  theme_minimal()
+
+print(p_vol_vs_sp)
+
+```
+
